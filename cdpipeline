@@ -1,0 +1,77 @@
+withPodTemplate 
+  agent any
+   stages {
+    def mvnHome = tool 'Maven3'
+    stage ('checkout')  {
+    checkout([$class: 'GitSCM', branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[credentialsId: 'a06ca7e5-625c-471f-ab63-58ea6dd78d24', url: 'https://github.com/chelseailoka/Chelseasrepo.git']]])
+    }
+
+   stage ('build')  {
+    sh "${mvnHome}/bin/mvn clean install -f MyFirstWebApp/pom.xml"
+    }
+
+     stage ('Code Quality scan')  {
+       withSonarQubeEnv('SonarQube') {
+       sh "${mvnHome}/bin/mvn -f MyFirstWebApp/pom.xml sonar:sonar"
+        }
+   }
+  
+   stage ('Code coverage')  {
+       jacoco()
+   }
+
+   stage ('Nexus upload')  {
+        nexusArtifactUploader(
+        nexusVersion: 'nexus3',
+        protocol: 'http',
+        nexusUrl: 'ec2-18-118-253-99.us-east-2.compute.amazonaws.com:8081',
+        groupId: 'com.dept.app',
+        version: '1.0-SNAPSHOT',
+        repository: 'maven-snapshots',
+        credentialsId: '77a90da7-fd7d-4975-bf64-2fe4836e7a36',
+        artifacts: [
+            [artifactId: 'MyFirstWebApp',
+             classifier: '',
+             file: 'MyFirstWebApp/target/MyFirstWebApp.war',
+             type: 'war']
+        ]
+     )
+    }
+   
+   stage ('DEV Deploy')  {
+      echo "deploying to DEV Env "
+      deploy adapters: [tomcat9(credentialsId: '4a14642d-9c22-4d8a-9ba7-ba8051dac9fa', path: '', url: 'http://ec2-18-117-171-0.us-east-2.compute.amazonaws.com:8090')], contextPath: null, war: '**/*.war'
+
+    }
+
+  stage ('Slack notification')  {
+    slackSend(channel:'testprojects', message: "Job is successful, here is the info -  Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})")
+   }
+
+   stage ('DEV Approve')  {
+            echo "Taking approval from Manager for QA Deploy"     
+            timeout(time: 7, unit: 'DAYS') {
+            input message: 'Do you approve to deploy into QA environment?', submitter: 'admin'
+            }
+     }
+
+stage ('QA Deploy')  {
+     echo "deploying into QA Env " 
+deploy adapters: [tomcat9(credentialsId: '4a14642d-9c22-4d8a-9ba7-ba8051dac9fa', path: '', url: 'http://ec2-18-117-171-0.us-east-2.compute.amazonaws.com:8090')], contextPath: null, war: '**/*.war'
+
+}
+
+stage ('QA Approve')  {
+    echo "Taking approval from QA manager"
+    timeout(time: 7, unit: 'DAYS') {
+        input message: 'Do you want to proceed to PROD Deploy?', submitter: 'admin,manager_userid'
+  }
+}
+
+stage ('PROD Deploy')  {
+     echo "deploying into PROD Env " 
+deploy adapters: [tomcat9(credentialsId: '4a14642d-9c22-4d8a-9ba7-ba8051dac9fa', path: '', url: 'http://ec2-18-117-171-0.us-east-2.compute.amazonaws.com:8090')], contextPath: null, war: '**/*.war'
+
+}
+}
+}
